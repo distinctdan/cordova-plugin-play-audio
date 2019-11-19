@@ -49,9 +49,10 @@ NSMutableDictionary* players;
 
         AVAudioPlayer* player = players[songId];
         player.volume = 0;
-        [player setVolume:vol fadeDuration:fadeInLen];
         [player setDelegate:self];
-        bool success = [player playAtTime:offsetSecs];
+        player.currentTime = offsetSecs;
+        bool success = [player play];
+        [player setVolume:vol fadeDuration:fadeInLen];
         if (success) {
             CDVPluginResult* result = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK];
             [self.commandDelegate sendPluginResult:result callbackId:command.callbackId];

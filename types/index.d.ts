@@ -4,7 +4,6 @@ interface IPlayAudioPlayOptions {
     startOffset?: number,
     vol?: number;
     fadeInLen?: number,
-    fadeOutLen?: number,
 }
 
 interface IPlayAudioEvent {
