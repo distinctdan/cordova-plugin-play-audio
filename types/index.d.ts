@@ -7,7 +7,7 @@ interface IPlayAudioPlayOptions {
 }
 
 interface IPlayAudioEvent {
-    name: 'SongAboutToEnd' | 'SongEnded';
+    eventName: 'SongEnded';
     songId: string;
 }
 

@@ -2,7 +2,9 @@
 
 @implementation PlayAudio
 
+bool hasRegisteredForEvents = false;
 NSMutableDictionary* players;
+NSString* eventCallbackId;
 
 - (void)pluginInitialize
 {
@@ -16,68 +18,106 @@ NSMutableDictionary* players;
 
 - (void)playSong:(CDVInvokedUrlCommand*)command
 {
-    @try {
-        NSError* err;
-        NSDictionary* props = command.arguments[0];
-        NSString* songId = props[@"songId"];
-        NSString* songURL = props[@"songURL"];
-        double offsetSecs = props[@"startOffset"] ? [props[@"startOffset"] doubleValue] : 0;
-        float vol = props[@"volume"] ? [props[@"volume"] floatValue] : 1;
-        float fadeInLen = props[@"fadeInLen"] ? [props[@"fadeInLen"] floatValue] : 0;
-        float fadeOutLen = props[@"fadeOutLen"] ? [props[@"fadeOutLen"] floatValue] : 0;
+    dispatch_queue_t queue = dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0);
+    dispatch_async(queue, ^{
+        @try {
+            NSError* err;
+            NSDictionary* props = command.arguments[0];
+            NSString* songId = props[@"songId"];
+            NSString* songURL = props[@"songURL"];
+            double offsetSecs = props[@"startOffset"] ? [props[@"startOffset"] doubleValue] : 0;
+            float volume = props[@"volume"] ? [props[@"volume"] floatValue] : 1;
+            float fadeInLen = props[@"fadeInLen"] ? [props[@"fadeInLen"] floatValue] : 0;
 
-        // Create player for this song if we haven't already
-        if (!players[songId]) {
-            NSString* basePath = [[[NSBundle mainBundle] resourcePath] stringByAppendingPathComponent:@"www"];
-            NSString* pathFromWWW = [NSString stringWithFormat:@"%@/%@", basePath, songURL];
+            // Create player for this song if we haven't already
+            if (!players[songId]) {
+                NSString* basePath = [[[NSBundle mainBundle] resourcePath] stringByAppendingPathComponent:@"www"];
+                NSString* pathFromWWW = [NSString stringWithFormat:@"%@/%@", basePath, songURL];
 
-            if ([[NSFileManager defaultManager] fileExistsAtPath : pathFromWWW]) {
-                NSURL *pathURL = [NSURL fileURLWithPath : pathFromWWW];
-                players[songId] = [[AVAudioPlayer alloc] initWithContentsOfURL:pathURL error:&err];
+                if ([[NSFileManager defaultManager] fileExistsAtPath : pathFromWWW]) {
+                    NSURL *pathURL = [NSURL fileURLWithPath : pathFromWWW];
+                    players[songId] = [[AVAudioPlayer alloc] initWithContentsOfURL:pathURL error:&err];
 
-                if (err) {
-                    NSString* msg = [NSString stringWithFormat:@"Player init error: %ld - %@", (long)err.code, err.description];
-                    [self onErrorWithMethodName:@"playSong" msg:msg  callbackId:command.callbackId];
+                    if (err) {
+                        NSString* msg = [NSString stringWithFormat:@"Player init error: %ld - %@", (long)err.code, err.description];
+                        [self onErrorWithMethodName:@"playSong" msg:msg  callbackId:command.callbackId];
+                        return;
+                    }
+                } else {
+                    NSString* msg = [NSString stringWithFormat:@"Song not found at path: %@", pathFromWWW];
+                    [self onErrorWithMethodName:@"playSong" msg:msg callbackId:command.callbackId];
                     return;
                 }
+            }
+
+            AVAudioPlayer* player = players[songId];
+            player.volume = 0;
+            [player setDelegate:self];
+            player.currentTime = offsetSecs;
+            bool success = [player play];
+            [player setVolume:volume fadeDuration:fadeInLen];
+            if (success) {
+                CDVPluginResult* result = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK];
+                [self.commandDelegate sendPluginResult:result callbackId:command.callbackId];
             } else {
-                NSString* msg = [NSString stringWithFormat:@"Song not found at path: %@", pathFromWWW];
-                [self onErrorWithMethodName:@"playSong" msg:msg callbackId:command.callbackId];
+                [self onErrorWithMethodName:@"playSong" msg:@"playing failed" callbackId:command.callbackId];
                 return;
             }
+        } @catch (NSException *exception) {
+            [self onErrorWithMethodName:@"playSong" exception:exception callbackId:command.callbackId];
         }
+    });
 
-        AVAudioPlayer* player = players[songId];
-        player.volume = 0;
-        [player setDelegate:self];
-        player.currentTime = offsetSecs;
-        bool success = [player play];
-        [player setVolume:vol fadeDuration:fadeInLen];
-        if (success) {
-            CDVPluginResult* result = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK];
-            [self.commandDelegate sendPluginResult:result callbackId:command.callbackId];
-        } else {
-            [self onErrorWithMethodName:@"playSong" msg:@"playing failed" callbackId:command.callbackId];
-            return;
-        }
-    } @catch (NSException *exception) {
-       [self onErrorWithMethodName:@"playSong" exception:exception callbackId:command.callbackId];
-   }
+    CDVPluginResult* result = [CDVPluginResult resultWithStatus:CDVCommandStatus_NO_RESULT];
+    [result setKeepCallbackAsBool:true];
+    [self.commandDelegate sendPluginResult:result callbackId:command.callbackId];
 }
 
 - (void)pauseSongs:(CDVInvokedUrlCommand*)command
 {
-    @try {
+    dispatch_queue_t queue = dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0);
+    dispatch_async(queue, ^{
+        @try {
+            NSArray* songIds = command.arguments[0];
+            for (NSString* songId in songIds) {
+                AVAudioPlayer* player = players[songId];
+                if (player) {
+                    [player pause];
+                } else {
+//                    NSLog(@"PlayAudio pauseSongs - no player found for songId \"%@\", ignoring.", songId);
+                }
+            }
 
-    } @catch (NSException *exception) {
-       [self onErrorWithMethodName:@"pauseSongs" exception:exception callbackId:command.callbackId];
-   }
+            CDVPluginResult* result = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK];
+            [self.commandDelegate sendPluginResult:result callbackId:command.callbackId];
+
+        } @catch (NSException *exception) {
+            [self onErrorWithMethodName:@"pauseSongs" exception:exception callbackId:command.callbackId];
+        }
+    });
+
+    CDVPluginResult* result = [CDVPluginResult resultWithStatus:CDVCommandStatus_NO_RESULT];
+    [result setKeepCallbackAsBool:true];
+    [self.commandDelegate sendPluginResult:result callbackId:command.callbackId];
 }
 
 - (void)setVolumes:(CDVInvokedUrlCommand*)command
 {
     @try {
+        NSArray* volOptions = command.arguments[0];
+        for (NSDictionary* volOption in volOptions) {
+            NSString* songId = volOption[@"songId"];
+            AVAudioPlayer* player = players[songId];
+            if (player) {
+                float vol = fmaxf(0, fminf(1, [volOption[@"volume"] floatValue]));
+                [player setVolume:vol];
+            } else {
+//                NSLog(@"PlayAudio setVolumes - no player found for songId \"%@\", ignoring.", songId);
+            }
+        }
 
+        CDVPluginResult* result = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK];
+        [self.commandDelegate sendPluginResult:result callbackId:command.callbackId];
     } @catch (NSException *exception) {
        [self onErrorWithMethodName:@"setVolumes" exception:exception callbackId:command.callbackId];
    }
@@ -86,7 +126,12 @@ NSMutableDictionary* players;
 - (void)registerForEvents:(CDVInvokedUrlCommand*)command
 {
     @try {
+        hasRegisteredForEvents = true;
+        eventCallbackId = command.callbackId;
 
+        CDVPluginResult* result = [CDVPluginResult resultWithStatus:CDVCommandStatus_NO_RESULT];
+        [result setKeepCallbackAsBool:true];
+        [self.commandDelegate sendPluginResult:result callbackId:command.callbackId];
     } @catch (NSException *exception) {
         [self onErrorWithMethodName:@"registerForEvents" exception:exception callbackId:command.callbackId];
    }
@@ -97,7 +142,23 @@ NSMutableDictionary* players;
 // ----------------------------------------------------
 - (void) audioPlayerDidFinishPlaying:(AVAudioPlayer*)player successfully:(BOOL)success
 {
-    NSLog(@"TEMP - audio finished. Success: %d", success);
+    if (hasRegisteredForEvents) {
+        // Find the player that finished so we can send its songId.
+        for (NSString* songId in players) {
+            if (players[songId] == player) {
+                NSMutableDictionary* props = [NSMutableDictionary dictionaryWithCapacity:2];
+                props[@"eventName"] = @"SongEnded";
+                props[@"songId"] = songId;
+
+                CDVPluginResult* result = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsDictionary:props];
+                [result setKeepCallbackAsBool:true];
+                [self.commandDelegate sendPluginResult:result callbackId:eventCallbackId];
+                return;
+            }
+        }
+
+        NSLog(@"PlayAudio ERROR: couldn't find player that supposedly just finished a song");
+    }
 }
 
 // ----------------------------------------------------
