@@ -1,210 +1,286 @@
-package org.apache.cordova.playAudio.playAudio;
+package org.apache.cordova.playAudio;
 
-import org.apache.cordova.CordovaWebView;
 import org.apache.cordova.CallbackContext;
-import org.apache.cordova.CordovaInterface;
 import org.apache.cordova.CordovaPlugin;
 import org.apache.cordova.PluginResult;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
 import android.content.Context;
-import android.hardware.Sensor;
-import android.hardware.SensorEvent;
-import android.hardware.SensorEventListener;
-import android.hardware.SensorManager;
+import android.content.res.AssetFileDescriptor;
+import android.content.res.AssetManager;
+import android.media.AudioAttributes;
+import android.media.MediaPlayer;
+import android.os.AsyncTask;
 import android.util.Log;
 
+import java.util.Timer;
+import java.util.TimerTask;
+import java.util.concurrent.ConcurrentHashMap;
+
 public class PlayAudio extends CordovaPlugin {
-    // From the docs: The desired delay between two consecutive events in microseconds.
-    // This is only a hint to the system. Events may be received faster or slower
-    // than the specified rate. Usually events are received faster.
-    // There are 1000000 microseconds in 1 second.
-    private int delayMicroseconds = (int) 1000000; // This value is never used - gets overwritten by js default.
+    private CallbackContext eventsCtx;
+    private ConcurrentHashMap<String, Timer> fadeTimers = new ConcurrentHashMap<String, Timer>();
+    private ConcurrentHashMap<String, MediaPlayer> players = new ConcurrentHashMap<String, MediaPlayer>();
 
-    // Keep track of whether we're running. Note that this is separate from whether
-    // we're actually getting events, because if the app pauses, we temporarily unregister
-    // from getting events in order to save battery life.
-    private boolean isRunning = false;
-
-    private CallbackContext jsCallbackContext;
-    private SensorManager sensorManager;
-    private Sensor mAccelSensor;
-
-    public AccelListener() {
-
-    }
-
-    /**
-     * Sets the context of the Command. This can then be used to do things like
-     * get file paths associated with the Activity.
-     *
-     * @param cordova The context of the main Activity.
-     * @param webView The associated CordovaWebView.
-     */
     @Override
-    public void initialize(CordovaInterface cordova, CordovaWebView webView) {
-        super.initialize(cordova, webView);
-        this.sensorManager = (SensorManager) cordova.getActivity().getSystemService(Context.SENSOR_SERVICE);
-        this.mAccelSensor = this.sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
+    protected void pluginInitialize() {
+
     }
 
-    /**
-     * Executes the request.
-     *
-     * @param action          The action to execute.
-     * @param args            The exec() arguments.
-     * @param callbackContext The callback context used when calling back into JavaScript.
-     * @return                Whether the action was valid.
-     */
-    public boolean execute(String action, JSONArray args, CallbackContext callbackContext) {
+    @Override
+    public boolean execute(String action, JSONArray args, CallbackContext ctx) {
         try {
-            this.jsCallbackContext = callbackContext;
-            if (action.equals("start")) {
-                // We expect to be passed a delay in milliseconds, so convert to microseconds.
-                this.delayMicroseconds = args.getInt(0) * 1000;
-
-                // If already running, re-register the listener so that we use the new delay.
-                if (this.isRunning) this.unregisterListener();
-
-                boolean success = this.registerListener();
-                if (success) {
-                    this.isRunning = true;
-
-                    // Send no result so that it saves the callback info, so that we can send updates later.
-                    PluginResult result = new PluginResult(PluginResult.Status.NO_RESULT, "");
-                    result.setKeepCallback(true);
-                    callbackContext.sendPluginResult(result);
-                } else {
-                    this.isRunning = false;
-                    // registerListener sends a fail result on error, so nothing to do here.
-                    // The error handling code is in registerListener, so that we send the same error
-                    // in the onResume method if it errors.
-                }
+            if (action.equals("playSong")) {
+                AsyncTask.execute(new Runnable() {
+                    @Override
+                    public void run() {
+                        playSong(args, ctx);
+                    }
+                });
+                PluginResult result = new PluginResult(PluginResult.Status.NO_RESULT);
+                result.setKeepCallback(true);
+                ctx.sendPluginResult(result);
                 return true;
             }
-            else if (action.equals("stop")) {
-                this.unregisterListener();
-                this.isRunning = false;
-
-                PluginResult result = new PluginResult(PluginResult.Status.OK, "");
-                callbackContext.sendPluginResult(result);
+            else if (action.equals("pauseSongs")) {
+                this.pauseSongs(args, ctx);
+                return true;
+            }
+            else if (action.equals("setVolumes")) {
+                this.setVolumes(args, ctx);
+                return true;
+            }
+            else if (action.equals("registerForEvents")) {
+                this.registerForEvents(args, ctx);
                 return true;
             }
             else {
-                this.fail("Invalid action: " + action);
+                this.fail(ctx, "execute", "Invalid action: " + action);
                 return false;
             }
         } catch (Exception e) {
             e.printStackTrace();
-            this.fail("execute: " + e.getMessage());
+            this.fail(ctx,"execute", e.toString());
             return false;
         }
     }
 
-    public void onDestroy() {
-        try {
-            if (this.isRunning) this.unregisterListener();
-        } catch (Exception e) {
-            e.printStackTrace();
-            this.fail("onDestroy: " + e.getMessage());
-        }
-    }
-
-    // On pause, we're supposed to unregister any sensors we're using. If we don't,
-    // they'll continue to run while the app is closed and will drain battery life.
-    @Override
-    public void onPause(boolean multitasking) {
-        try {
-            if (this.isRunning) this.unregisterListener();
-        } catch (Exception e) {
-            e.printStackTrace();
-            this.fail("onPause: " + e.getMessage());
-        }
-    }
-
-    @Override
-    public void onResume(boolean multitasking) {
-        try {
-            if (this.isRunning) this.registerListener();
-        } catch (Exception e) {
-            e.printStackTrace();
-            this.fail("onResume: " + e.getMessage());
-        }
-    }
-
-    // Called when the webview navigates or reloads.
-    @Override
-    public void onReset() {
-        try {
-            this.unregisterListener();
-            this.isRunning = false;
-        } catch (Exception e) {
-            e.printStackTrace();
-            this.fail("onReset: " + e.getMessage());
-        }
-    }
-
     //--------------------------------------------------------------------------
-    // SENSOR METHODS
+    // AUDIO METHODS
     //--------------------------------------------------------------------------
-    public void onAccuracyChanged(Sensor sensor, int accuracy) {
-        // Ignore accuracy because even low accuracy data is better than none.
-        // This shouldn't really be an issue for the accelerometer anyways.
+    private synchronized void playSong(JSONArray args, CallbackContext ctx) {
+        try {
+            JSONObject props = args.getJSONObject(0);
+            String songId = props.getString("songId");
+            String songURL = props.optString("songURL", null);
+            double startOffset = props.optDouble("startOffset", -1);
+            double volume = props.optDouble("volume", -1);
+            double fadeInLen = props.optDouble("fadeInLen", 0);
+            boolean hasVolume = volume != -1;
+            volume = Math.min(1.0, Math.max(0.0, volume));
+
+            if (fadeInLen > 0 && !hasVolume) {
+                this.fail(ctx, "playSong", "ERROR: when fading in, you must pass 'volume'.");
+                return;
+            }
+
+            String fullPath = "www/" + songURL;
+
+            Context appContext = cordova.getActivity().getApplicationContext();
+            AssetManager am = appContext.getResources().getAssets();
+            AssetFileDescriptor afd = am.openFd(fullPath);
+
+            MediaPlayer player = this.players.get(songId);
+            // Create new player if we don't have a cached one.
+            if (player == null) {
+                player = new MediaPlayer();
+                player.setAudioAttributes(new AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_MEDIA)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                        .build());
+                player.setDataSource(afd.getFileDescriptor(), afd.getStartOffset(), afd.getLength());
+                player.prepare();
+
+                player.setOnCompletionListener((MediaPlayer p) -> {
+                    onSongComplete(songId);
+                });
+
+                this.players.put(songId, player);
+            }
+            else {
+                // Cancel existing timer if necessary
+                Timer timer = this.fadeTimers.get(songId);
+                if (timer != null) timer.cancel();
+            }
+
+            if (startOffset != -1) {
+                player.seekTo((long)(startOffset * 1000), MediaPlayer.SEEK_CLOSEST);
+            }
+
+            // If fading in, start volume at 0.
+            double startVolume = volume;
+            if (fadeInLen > 0) startVolume = 0.0;
+
+            if (hasVolume) player.setVolume((float)startVolume, (float)startVolume);
+
+            player.start();
+
+            // Start a timer to do the fade
+            if (fadeInLen > 0) {
+                // Cancel existing timer for this player
+                Timer oldTimer = this.fadeTimers.get(songId);
+                if (oldTimer != null) oldTimer.cancel();
+
+                // Make everything final because timers only work with final.
+                final Timer timer = new Timer();
+                final long startTime = System.currentTimeMillis();
+                final long fadeInLenMs = (long)(fadeInLen*1000);
+                final double startVolFinal = startVolume;
+                final double endVolFinal = volume;
+                final MediaPlayer playerFinal = player;
+
+                timer.scheduleAtFixedRate(new TimerTask() {
+                    public void run() {
+                        double t = (System.currentTimeMillis() - startTime)/(double)fadeInLenMs;
+                        double clippedT = Math.min(1.0, Math.max(0.0, t));
+
+                        // Do lerp
+                        double vol = (startVolFinal * (1.0 - clippedT)) + (endVolFinal * clippedT);
+                        playerFinal.setVolume((float)vol, (float)vol);
+
+                        if (t >= 1) {
+                            timer.cancel();
+                        }
+                    }
+                }, 0, 1000/60);
+            }
+
+            PluginResult result = new PluginResult(PluginResult.Status.OK);
+            ctx.sendPluginResult(result);
+        } catch (Exception e) {
+            e.printStackTrace();
+            this.fail(ctx, "playSong", e.toString());
+        }
     }
 
-    public void onSensorChanged(SensorEvent event) {
+    private synchronized void pauseSongs(JSONArray args, CallbackContext ctx) {
         try {
-            // Only look at accelerometer events
-            if (event.sensor.getType() != Sensor.TYPE_ACCELEROMETER) return;
+            JSONArray songIds = args.getJSONArray(0);
 
-            JSONObject json = new JSONObject();
-            json.put("x", event.values[0]);
-            json.put("y", event.values[1]);
-            json.put("z", event.values[2]);
-            json.put("timestamp", System.currentTimeMillis());
+            int len = songIds.length();
+            for (int i = 0; i < len; i++) {
+                String songId = songIds.getString(i);
 
-            PluginResult result = new PluginResult(PluginResult.Status.OK, json);
+                MediaPlayer player = this.players.get(songId);
+                if (player != null) {
+                    Timer timer = this.fadeTimers.get(songId);
+                    if (timer != null) timer.cancel();
+
+                    player.pause();
+                }
+            }
+
+            PluginResult result = new PluginResult(PluginResult.Status.OK);
+            ctx.sendPluginResult(result);
+        } catch (Exception e) {
+            e.printStackTrace();
+            this.fail(ctx, "pauseSongs", e.toString());
+        }
+    }
+
+    private synchronized void setVolumes(JSONArray args, CallbackContext ctx) {
+        try {
+            JSONArray volObjs = args.getJSONArray(0);
+
+            int len = volObjs.length();
+            for (int i = 0; i < len; i++) {
+                JSONObject volObj = volObjs.getJSONObject(i);
+                String songId = volObj.getString("songId");
+                double volume = Math.min(1.0, Math.max(0.0, volObj.getDouble("volume")));
+
+                MediaPlayer player = this.players.get(songId);
+                if (player != null) {
+                    // Cancel existing fade timer because we're setting the volume.
+                    Timer timer = this.fadeTimers.get(songId);
+                    if (timer != null) timer.cancel();
+
+                    player.setVolume((float)volume, (float)volume);
+                }
+            }
+
+            PluginResult result = new PluginResult(PluginResult.Status.OK);
+            ctx.sendPluginResult(result);
+        } catch (Exception e) {
+            e.printStackTrace();
+            this.fail(ctx, "setVolumes", e.toString());
+        }
+    }
+
+    private synchronized void registerForEvents(JSONArray args, CallbackContext ctx) {
+        try {
+            this.eventsCtx = ctx;
+
+            PluginResult result = new PluginResult(PluginResult.Status.NO_RESULT);
             result.setKeepCallback(true);
-            jsCallbackContext.sendPluginResult(result);
+            ctx.sendPluginResult(result);
         } catch (Exception e) {
             e.printStackTrace();
-            this.fail("onSensorChanged: " + e.getMessage());
+            this.fail(ctx, "registerForEvents", e.toString());
+        }
+    }
+
+    private void onSongComplete(String songId) {
+        if (this.eventsCtx != null) {
+            try {
+                JSONObject event = new JSONObject();
+                event.put("songId", songId);
+                event.put("eventName", "SongEnded");
+
+                PluginResult result = new PluginResult(PluginResult.Status.OK, event);
+                result.setKeepCallback(true);
+                this.eventsCtx.sendPluginResult(result);
+            } catch (Exception e) {
+                e.printStackTrace();
+                this.fail(this.eventsCtx, "onSongComplete", e.toString(), true);
+            }
         }
     }
 
     //--------------------------------------------------------------------------
-    // LOCAL METHODS
+    // LIFECYCLE METHODS
     //--------------------------------------------------------------------------
-
-    private boolean registerListener() {
-        // This can be null if the device doesn't have an accelerometer.
-        if (this.mAccelSensor != null) {
-            // This returns false if there's an error
-            boolean success = this.sensorManager.registerListener(this, this.mAccelSensor, delayMicroseconds);
-            if (!success) this.fail("Device sensor returned an error.");
-            return success;
-        } else {
-            this.fail("No accelerometer found.");
-        }
-        return false;
+    public synchronized void onDestroy() {
+        this.fadeTimers.forEach((String songId, Timer timer) -> {
+            timer.cancel();
+        });
     }
 
-    private void unregisterListener() {
-        // This can be null if the device doesn't have an accelerometer.
-        if (this.mAccelSensor != null) {
-            this.sensorManager.unregisterListener(this);
-        }
+    @Override
+    public synchronized void onReset() {
+        this.fadeTimers.forEach((String songId, Timer timer) -> {
+            timer.cancel();
+        });
+
+        this.players.forEach((String songId, MediaPlayer player) -> {
+            player.pause();
+        });
     }
 
     // Sends an error back to JS
-    private void fail(String message) {
-        Log.e("CordovaPluginDeviceMotion", message);
-        if (jsCallbackContext != null) {
-            PluginResult err = new PluginResult(PluginResult.Status.ERROR,
-                    "CordovaPluginDeviceMotion error: " + message);
-            err.setKeepCallback(true);
-            jsCallbackContext.sendPluginResult(err);
+    private void fail(CallbackContext ctx, String method, String message) {
+        this.fail(ctx, method, message, false);
+    }
+
+    private void fail(CallbackContext ctx, String method, String message, boolean keepCallback) {
+        Log.e("PlayAudio", method + " error - " +message);
+        if (ctx != null) {
+            PluginResult result = new PluginResult(PluginResult.Status.ERROR,
+                    "PlayAudio " + method + " error - " + message);
+
+            if (keepCallback) result.setKeepCallback(true);
+
+            ctx.sendPluginResult(result);
         }
     }
 }

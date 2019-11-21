@@ -25,8 +25,8 @@ NSString* eventCallbackId;
             NSDictionary* props = command.arguments[0];
             NSString* songId = props[@"songId"];
             NSString* songURL = props[@"songURL"];
-            double offsetSecs = props[@"startOffset"] ? [props[@"startOffset"] doubleValue] : 0;
-            float volume = props[@"volume"] ? [props[@"volume"] floatValue] : 1;
+            double offsetSecs = props[@"startOffset"] ? [props[@"startOffset"] doubleValue] : -1;
+            float volume = props[@"volume"] ? [props[@"volume"] floatValue] : -1;
             float fadeInLen = props[@"fadeInLen"] ? [props[@"fadeInLen"] floatValue] : 0;
 
             // Create player for this song if we haven't already
@@ -51,11 +51,22 @@ NSString* eventCallbackId;
             }
 
             AVAudioPlayer* player = players[songId];
-            player.volume = 0;
+            if (fadeInLen > 0) {
+                player.volume = 0;
+            } else if (volume != -1) {
+                player.volume = fmaxf(0, fminf(1, volume));
+            }
+
             [player setDelegate:self];
-            player.currentTime = offsetSecs;
+            if (offsetSecs != -1) {
+                player.currentTime = offsetSecs;
+            }
             bool success = [player play];
-            [player setVolume:volume fadeDuration:fadeInLen];
+
+            if (volume != -1) {
+                volume = fmaxf(0, fminf(1, volume));
+                [player setVolume:volume fadeDuration:fadeInLen];
+            }
             if (success) {
                 CDVPluginResult* result = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK];
                 [self.commandDelegate sendPluginResult:result callbackId:command.callbackId];

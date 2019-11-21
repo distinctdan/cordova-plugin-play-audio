@@ -2,7 +2,7 @@ interface IPlayAudioPlayOptions {
     songId: string,
     songURL?: string,
     startOffset?: number,
-    vol?: number;
+    volume?: number;
     fadeInLen?: number,
 }
 
