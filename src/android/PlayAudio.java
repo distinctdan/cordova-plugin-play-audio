@@ -12,6 +12,7 @@ import android.content.res.AssetManager;
 import android.media.AudioAttributes;
 import android.media.MediaPlayer;
 import android.os.AsyncTask;
+import android.os.Build;
 import android.util.Log;
 
 import java.util.Timer;
@@ -115,7 +116,11 @@ public class PlayAudio extends CordovaPlugin {
             }
 
             if (startOffset != -1) {
-                player.seekTo((long)(startOffset * 1000), MediaPlayer.SEEK_CLOSEST);
+                if (Build.VERSION.SDK_INT >= 26) {
+                    player.seekTo((long) (startOffset * 1000), MediaPlayer.SEEK_CLOSEST);
+                } else {
+                    player.seekTo((int) (startOffset * 1000));
+                }
             }
 
             // If fading in, start volume at 0.
