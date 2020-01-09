@@ -31,10 +31,11 @@ const volumeOptions = [
 ];
 ```
 ### window.plugins.PlayAudio.registerForEvents(eventCallback?, error?)
-Use this method to listen for events. Currently only the `SongEnded` event is supported. The callback will be called with the following object:
+Use this method to listen for events. The audio interruption events are iOS only for now, and are useful for getting notified when iOS interrupts the audio context for things like an incoming call or Siri activation. The callback will be called with the following object:
 ```
 {
-    eventName: 'SongEnded',
-    songId: 'Song1',
+    eventName: 'SongEnded' | 'AudioInterruptionBegan' | 'AudioInterruptionEnded',
+    songId?: 'Song1', // Only passed for SongEnded event.
 }
 ```
+**NOTE**: There is a current issue on iOS where if you close a javascript AudioContext, it will interrupt the native audio. It fires an `AudioInterruptionBegan` event, but never fires an `AudioInterruptionEnded` event. If this applies to you, you'll need to listen for the `AudioInterruptionBegan` event and manually call `playSong` again if the audio actually should restart, like if it's within maybe several seconds of the context closing. You don't want to restart the audio if the interruption is an incoming phonecall or Siri being activated, but there's unfortunately no way to tell that from the event alone.
