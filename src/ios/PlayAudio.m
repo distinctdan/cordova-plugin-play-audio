@@ -9,6 +9,7 @@ NSString* eventCallbackId;
 - (void)pluginInitialize
 {
     players = [[NSMutableDictionary alloc] init];
+    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(onInterruption:) name:AVAudioSessionInterruptionNotification object:nil];
 }
 
 - (void)dealloc
@@ -169,6 +170,27 @@ NSString* eventCallbackId;
         }
 
         NSLog(@"PlayAudio ERROR: couldn't find player that supposedly just finished a song");
+    }
+}
+
+- (void)onInterruption:(NSNotification*)notification
+{
+    NSLog(@"PlayAudio Interrupt. notification: %@", notification);
+
+    if (hasRegisteredForEvents) {
+        NSMutableDictionary* props = [NSMutableDictionary dictionaryWithCapacity:2];
+
+        int interruptionType = (int)[[notification.userInfo valueForKey:AVAudioSessionInterruptionTypeKey] integerValue];
+        if (interruptionType == AVAudioSessionInterruptionTypeBegan) {
+            props[@"eventName"] = @"AudioInterruptionBegan";
+        } else if (interruptionType == AVAudioSessionInterruptionTypeEnded) {
+            props[@"eventName"] = @"AudioInterruptionEnded";
+        }
+
+        CDVPluginResult* result = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsDictionary:props];
+        [result setKeepCallbackAsBool:true];
+        [self.commandDelegate sendPluginResult:result callbackId:eventCallbackId];
+        return;
     }
 }
 
