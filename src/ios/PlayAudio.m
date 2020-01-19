@@ -1,10 +1,10 @@
 #import "PlayAudio.h"
 
-@implementation PlayAudio
-
-bool hasRegisteredForEvents = false;
-NSMutableDictionary* players;
-NSString* eventCallbackId;
+@implementation PlayAudio {
+    bool hasRegisteredForEvents;
+    NSMutableDictionary* players;
+    NSString* eventCallbackId;
+}
 
 - (void)pluginInitialize
 {
